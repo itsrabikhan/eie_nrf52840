@@ -22,6 +22,9 @@ static enum smf_state_result state_2_run(void* o);
 static void state_3_entry(void* o);
 static enum smf_state_result state_3_run(void* o);
 
+static void standby_entry(void* o);
+static enum smf_state_result standby_run(void* o);
+
 
 // TYPEDEFS
 
@@ -29,6 +32,7 @@ enum project_machine_states {
     STATE_1,
     STATE_2,
     STATE_3,
+    STANDBY
 };
 
 typedef struct {
@@ -38,7 +42,8 @@ typedef struct {
     uint16_t count;
     bool status_led_state;
 
-    
+    uint16_t pulsar;
+    bool pulsar_reversal_state;
 } state_object_t;
 
 
@@ -48,6 +53,7 @@ static const struct smf_state project_states[] = {
     [STATE_1] = SMF_CREATE_STATE(state_1_entry, state_1_run, NULL, NULL, NULL),
     [STATE_2] = SMF_CREATE_STATE(state_2_entry, state_2_run, NULL, NULL, NULL),
     [STATE_3] = SMF_CREATE_STATE(state_3_entry, state_3_run, NULL, NULL, NULL),
+    [STANDBY] = SMF_CREATE_STATE(standby_entry, standby_run, NULL, NULL, NULL),
 };
 
 static state_object_t state_object;
@@ -57,6 +63,10 @@ static state_object_t state_object;
 
 void state_machine_init() {
     state_object.count = 0;
+    state_object.status_led_state = false;
+    state_object.pulsar = 0;
+    state_object.pulsar_reversal_state = false;
+
     smf_set_initial(SMF_CTX(&state_object), &project_states[STATE_1]);
 }
 
@@ -121,6 +131,33 @@ static enum smf_state_result state_3_run(void* o) {
     return SMF_EVENT_HANDLED;
 }
 
+static void standby_entry(void* o) {
+    printk("Entering Standby State - LED PULSE\n");
+    state_object.count = 0;
+    state_object.pulsar = 0;
+    state_object.pulsar_reversal_state = false;
+
+    LED_set(LED3, LED_OFF);
+    state_object.status_led_state = false;
+}
+
+static enum smf_state_result standby_run(void* o) {
+    if (state_object.pulsar >= 100) {
+        state_object.pulsar_reversal_state = true;
+    } else if (state_object.pulsar == 0) {
+        state_object.pulsar_reversal_state = false;
+    }
+
+    if (state_object.pulsar_reversal_state) {
+        state_object.pulsar--;
+    } else {
+        state_object.pulsar++;
+    }
+
+    LED_pwm(LED3, state_object.pulsar);
+
+    return SMF_EVENT_HANDLED;
+}
 
 // static void led_on_state_entry(void* o) {
 //     LED_set(LED3, LED_ON);
