@@ -17,9 +17,9 @@
 // TYPEDEFS
 
 typedef enum {
-    STATE_1,
-    STATE_2,
-    STATE_3,
+    INPUT_STATE,
+    MENU_STATE,
+    SAVED_STATE,
     STANDBY
 } project_machine_states;
 
@@ -34,19 +34,25 @@ typedef struct {
     uint16_t pulsar;
     bool pulsar_reversal_state;
     project_machine_states last_state;
+
+    uint8_t buffer;
+    int buffer_index;
+
+    char ascii_string[64];
+    uint8_t string_index;
 } state_object_t;
 
 
 // FUNCTION PROTOTYPES
 
-static void state_1_entry(void* o);
-static enum smf_state_result state_1_run(void* o);
+static void input_state_entry(void* o);
+static enum smf_state_result input_state_run(void* o);
 
-static void state_2_entry(void* o);
-static enum smf_state_result state_2_run(void* o);
+static void menu_state_entry(void* o);
+static enum smf_state_result menu_state_run(void* o);
 
-static void state_3_entry(void* o);
-static enum smf_state_result state_3_run(void* o);
+static void saved_state_entry(void* o);
+static enum smf_state_result saved_state_run(void* o);
 
 static void standby_entry(void* o);
 static enum smf_state_result standby_run(void* o);
@@ -54,13 +60,15 @@ static enum smf_state_result standby_run(void* o);
 static void handle_standby_btn_press(project_machine_states current_state);
 static void fresh_state_entry();
 
+static void blink_led(int frequency_hz);
+
 
 // LOCAL VARIABLES
 
 static const struct smf_state project_states[] = {
-    [STATE_1] = SMF_CREATE_STATE(state_1_entry, state_1_run, NULL, NULL, NULL),
-    [STATE_2] = SMF_CREATE_STATE(state_2_entry, state_2_run, NULL, NULL, NULL),
-    [STATE_3] = SMF_CREATE_STATE(state_3_entry, state_3_run, NULL, NULL, NULL),
+    [INPUT_STATE] = SMF_CREATE_STATE(input_state_entry, input_state_run, NULL, NULL, NULL),
+    [MENU_STATE] = SMF_CREATE_STATE(menu_state_entry, menu_state_run, NULL, NULL, NULL),
+    [SAVED_STATE] = SMF_CREATE_STATE(saved_state_entry, saved_state_run, NULL, NULL, NULL),
     [STANDBY] = SMF_CREATE_STATE(standby_entry, standby_run, NULL, NULL, NULL),
 };
 
@@ -69,6 +77,17 @@ static state_object_t state_object;
 
 // FUNCTIONS
 
+static void blink_led(int frequency_hz) {
+    int count = 1000 / (frequency_hz * 2);
+    if (state_object.count > count) {
+        state_object.count = 0;
+        state_object.status_led_state = !state_object.status_led_state;
+        LED_set(LED3, state_object.status_led_state ? LED_ON : LED_OFF);
+    } else {
+        state_object.count++;
+    }
+}
+
 void state_machine_init() {
     state_object.count = 0;
     state_object.status_led_state = false;
@@ -76,7 +95,7 @@ void state_machine_init() {
     state_object.pulsar_reversal_state = false;
     state_object.standby_count = 0;
 
-    smf_set_initial(SMF_CTX(&state_object), &project_states[STATE_1]);
+    smf_set_initial(SMF_CTX(&state_object), &project_states[INPUT_STATE]);
 }
 
 int state_machine_run() {
@@ -96,59 +115,117 @@ static void fresh_state_entry() {
     LED_set(LED3, LED_OFF);
 }
 
-static void state_1_entry(void* o) {
-    printk("Entering State 1 - LED at 1Hz\n");
+static void input_state_entry(void* o) {
+    printk("Entering Input State - LED at 1Hz\n");
     fresh_state_entry();
 }
 
-static enum smf_state_result state_1_run(void* o) {
-    if (state_object.count > 500) {
-        state_object.count = 0;
-        state_object.status_led_state = !state_object.status_led_state;
-        LED_set(LED3, state_object.status_led_state ? LED_ON : LED_OFF);
-    } else {
-        state_object.count++;
+static enum smf_state_result input_state_run(void* o) {
+    LED_set(LED0, LED_OFF);
+    LED_set(LED1, LED_OFF);
+    blink_led(1);
+
+    // reflect button states on LEDs
+    LED_set(LED0, BTN_is_pressed(BTN0) ? LED_ON : LED_OFF);
+    LED_set(LED1, BTN_is_pressed(BTN1) ? LED_ON : LED_OFF);
+
+    int index = state_object.buffer_index;
+    if (BTN_check_clear_pressed(BTN0)) {
+        // set bit at index position to 0
+        state_object.buffer &= ~(1u << (7 - index));
+        state_object.buffer_index = index + 1;
+        printk("User entered 0 - Buffer ASCII value: %u\n", state_object.buffer);
+    } else if (BTN_check_clear_pressed(BTN1)) {
+        // set bit at index position to 1
+        state_object.buffer |= (1u << (7 - index));
+        state_object.buffer_index = index + 1;
+        printk("User entered 1 - Buffer ASCII value: %u\n", state_object.buffer);
+    } else if (BTN_check_clear_pressed(BTN2)) {
+        // reset buffer and index
+        state_object.buffer = 0;
+        index = 0;
+        printk("User cleared buffer\n");
+    } else if (BTN_check_clear_pressed(BTN3)) {
+        // save code as is
+        index = 8;
     }
 
-    handle_standby_btn_press(STATE_1);
+    if (index >= 8) {
+        index = 0;
+        state_object.buffer_index = 0;
+        // convert buffer to ASCII character
+        char ascii_char = (char) (state_object.buffer);
+        state_object.ascii_string[state_object.string_index] = ascii_char;
+        state_object.string_index++;
+        state_object.ascii_string[state_object.string_index] = '\0';
+        printk("Saved character: %c, Current string: %s\n", ascii_char, state_object.ascii_string);
+        state_object.buffer = 0;
+        smf_set_state(SMF_CTX(&state_object), &project_states[MENU_STATE]);
+        return SMF_EVENT_HANDLED;
+    }
+
+    handle_standby_btn_press(INPUT_STATE);
 
     return SMF_EVENT_HANDLED;
 }
 
-static void state_2_entry(void* o) {
-    printk("Entering State 2 - LED at 4Hz\n");
+static void menu_state_entry(void* o) {
+    printk("Entering Menu State - LED at 4Hz\n");
     fresh_state_entry();
 }
 
-static enum smf_state_result state_2_run(void* o) {
-    if (state_object.count > 125) {
-        state_object.count = 0;
-        state_object.status_led_state = !state_object.status_led_state;
-        LED_set(LED3, state_object.status_led_state ? LED_ON : LED_OFF);
-    } else {
-        state_object.count++;
+static enum smf_state_result menu_state_run(void* o) {
+    blink_led(4);
+
+    // if BTN0 or BTN1 pressed, go back to input state
+    // the button that is pressed will be reflected in the input state
+    // unless somehow they press and release in <1ms
+    if (BTN_check_pressed(BTN0) || BTN_check_pressed(BTN1)) {
+        smf_set_state(SMF_CTX(&state_object), &project_states[INPUT_STATE]);
+        return SMF_EVENT_HANDLED;
     }
 
-    handle_standby_btn_press(STATE_2);
+    if (BTN_check_clear_pressed(BTN2)) {
+        state_object.string_index = 0;
+        state_object.ascii_string[0] = '\0';
+        printk("Cleared saved string.\n");
+        smf_set_state(SMF_CTX(&state_object), &project_states[INPUT_STATE]);
+        return SMF_EVENT_HANDLED;
+    }
+
+    if (BTN_check_clear_pressed(BTN3)) {
+        printk("Saved string: %s\n", state_object.ascii_string);
+        smf_set_state(SMF_CTX(&state_object), &project_states[SAVED_STATE]);
+        return SMF_EVENT_HANDLED;
+    }
+
+    handle_standby_btn_press(MENU_STATE);
 
     return SMF_EVENT_HANDLED;
 }
 
-static void state_3_entry(void* o) {
-    printk("Entering State 3 - LED at 16Hz\n");
+static void saved_state_entry(void* o) {
+    printk("Entering Saved String State - LED at 16Hz\n");
     fresh_state_entry();
 }
 
-static enum smf_state_result state_3_run(void* o) {
-    if (state_object.count > 31) {
-        state_object.count = 0;
-        state_object.status_led_state = !state_object.status_led_state;
-        LED_set(LED3, state_object.status_led_state ? LED_ON : LED_OFF);
-    } else {
-        state_object.count++;
+static enum smf_state_result saved_state_run(void* o) {
+    blink_led(16);
+
+    if (BTN_check_clear_pressed(BTN2)) {
+        state_object.string_index = 0;
+        state_object.ascii_string[0] = '\0';
+        printk("Cleared saved string.\n");
+        smf_set_state(SMF_CTX(&state_object), &project_states[INPUT_STATE]);
+        return SMF_EVENT_HANDLED;
     }
 
-    handle_standby_btn_press(STATE_3);
+    if (BTN_check_clear_pressed(BTN3)) {
+        printk("Saved string: %s\n", state_object.ascii_string);
+        return SMF_EVENT_HANDLED;
+    }
+
+    handle_standby_btn_press(SAVED_STATE);
 
     return SMF_EVENT_HANDLED;
 }
