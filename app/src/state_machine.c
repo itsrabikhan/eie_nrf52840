@@ -59,7 +59,6 @@ static enum smf_state_result standby_run(void* o);
 
 static void handle_standby_btn_press(project_machine_states current_state);
 static void fresh_state_entry();
-
 static void blink_led(int frequency_hz);
 
 
@@ -247,6 +246,9 @@ static void handle_standby_btn_press(project_machine_states current_state) {
 static void standby_entry(void* o) {
     printk("Entering Standby State - LED PULSE\n");
     fresh_state_entry();
+
+    state_object.buffer = 0;
+    state_object.buffer_index = 0;
 
     // reset button press state so we don't immediately exit standby
     BTN_check_clear_pressed(BTN0);
