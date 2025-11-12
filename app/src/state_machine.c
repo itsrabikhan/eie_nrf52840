@@ -134,16 +134,19 @@ static enum smf_state_result input_state_run(void* o) {
         state_object.buffer &= ~(1u << (7 - index));
         state_object.buffer_index = index + 1;
         printk("User entered 0 - Buffer ASCII value: %u\n", state_object.buffer);
+
     } else if (BTN_check_clear_pressed(BTN1)) {
         // set bit at index position to 1
         state_object.buffer |= (1u << (7 - index));
         state_object.buffer_index = index + 1;
         printk("User entered 1 - Buffer ASCII value: %u\n", state_object.buffer);
+
     } else if (BTN_check_clear_pressed(BTN2)) {
         // reset buffer and index
         state_object.buffer = 0;
         index = 0;
-        printk("User cleared buffer\n");
+        printk("Buffer cleared.\n");
+
     } else if (BTN_check_clear_pressed(BTN3)) {
         // save code as is
         index = 8;
